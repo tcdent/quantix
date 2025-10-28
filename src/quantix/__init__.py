@@ -22,6 +22,8 @@ Example:
     >>>     random_float = qrng.read_float()
 """
 
+from importlib.metadata import version, PackageNotFoundError
+
 from .quantix import (
     Quantix,
     DeviceType,
@@ -29,7 +31,12 @@ from .quantix import (
     count_devices,
 )
 
-__version__ = "0.1.0"
+try:
+    __version__ = version("quantix")
+except PackageNotFoundError:
+    # Package not installed, use fallback
+    __version__ = "0.0.0+dev"
+
 __all__ = [
     "Quantix",
     "DeviceType",

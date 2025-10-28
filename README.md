@@ -24,17 +24,6 @@ The kernel driver required significant updates:
 
 Without these fixes, the driver would not load or would crash when performing ioctl operations on kernel 6.1+.
 
-## Features
-
-- ✅ **Pure Python** (3.9+) with full type hints
-- ✅ **Zero dependencies** - uses only standard library
-- ✅ **Direct device access** - reads from `/dev/qrandom*`
-- ✅ **Context manager support** - automatic resource management
-- ✅ **Complete ioctl API** - device info, module control, etc.
-- ✅ **Type-safe** - full mypy compliance with `py.typed`
-- ✅ **Efficient** - unbuffered reads for maximum throughput
-- ✅ **Clean API** - Pythonic interface
-
 ## Installation
 
 ### Prerequisites
