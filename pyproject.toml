@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "quantix"
+name = "quantix-rng"
 version = "0.1.0"
 description = "Pure Python interface for ID Quantique Quantis Quantum Random Number Generators"
 readme = "README.md"

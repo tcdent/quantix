@@ -43,10 +43,15 @@ Without these fixes, the driver would not load or would crash when performing io
 
 ```bash
 # From PyPI
-pip install quantix
+pip install quantix-rng
 
 # Or with uv (recommended)
-uv pip install quantix
+uv pip install quantix-rng
+```
+
+**Note**: The package name is `quantix-rng` but you import it as `quantix`:
+```python
+from quantix import Quantix, DeviceType
 ```
 
 ### Development Installation

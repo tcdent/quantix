@@ -32,7 +32,7 @@ from .quantix import (
 )
 
 try:
-    __version__ = version("quantix")
+    __version__ = version("quantix-rng")
 except PackageNotFoundError:
     # Package not installed, use fallback
     __version__ = "0.0.0+dev"
