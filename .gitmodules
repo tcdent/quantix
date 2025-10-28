@@ -1,0 +1,3 @@
+[submodule "vendor/quantis-pci"]
+	path = vendor/quantis-pci
+	url = https://github.com/tcdent/quantis-pci.git
