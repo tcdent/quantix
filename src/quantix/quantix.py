@@ -18,7 +18,10 @@ import glob
 import struct
 from enum import IntEnum
 from pathlib import Path
-from typing import BinaryIO, cast
+from typing import TYPE_CHECKING, BinaryIO, cast
+
+if TYPE_CHECKING:
+    from ._usb_backend import QuantisUsbDevice
 
 __all__ = [
     "DeviceType",
@@ -124,7 +127,8 @@ def count_devices(device_type: DeviceType = DeviceType.PCI) -> int:
         Number of devices detected (0 if none)
     """
     if device_type == DeviceType.USB:
-        return 0  # USB not supported in this implementation
+        from ._usb_backend import count_usb_devices
+        return count_usb_devices()
 
     # Count device nodes matching DEV_PREFIX
     devices = glob.glob(f"{DEV_PREFIX}*")
@@ -144,6 +148,7 @@ class Quantix:
     device_number: int
     device_path: str
     _fd: BinaryIO | None  # file object or None
+    _usb: "QuantisUsbDevice | None"
 
     def __init__(self, device_type: DeviceType = DeviceType.PCI, device_number: int = 0):
         """
@@ -164,12 +169,16 @@ class Quantix:
         """
         # Initialize _fd first so __del__ won't fail if __init__ raises
         self._fd = None
-
-        if device_type == DeviceType.USB:
-            raise QuantixException("USB devices not supported")
-
+        self._usb = None                      # set before anything can raise (__del__)
         self.device_type = device_type
         self.device_number = device_number
+
+        if device_type == DeviceType.USB:
+            from ._usb_backend import QuantisUsbDevice
+            self._usb = QuantisUsbDevice(device_number)
+            self.device_path = self._usb.path
+            return
+
         self.device_path = f"{DEV_PREFIX}{device_number}"
 
         # Verify device exists
@@ -184,6 +193,10 @@ class Quantix:
 
     def __enter__(self) -> "Quantix":
         """Context manager entry - opens the device"""
+        if self._usb is not None:
+            self._usb.open()
+            return self
+
         if self._fd is None:
             try:
                 self._fd = open(self.device_path, "rb", buffering=0)
@@ -203,6 +216,13 @@ class Quantix:
 
     def close(self) -> None:
         """Close the device file descriptor"""
+        if self._usb is not None:
+            try:
+                self._usb.close()
+            except Exception:
+                pass
+            return
+
         if self._fd is not None:
             try:
                 self._fd.close()
@@ -210,6 +230,11 @@ class Quantix:
                 pass  # Ignore errors during cleanup
             finally:
                 self._fd = None
+
+    def _require_usb(self) -> "QuantisUsbDevice":
+        if self._usb is None:
+            raise QuantixException("Only available for USB devices", self.device_path)
+        return self._usb
 
     def _ioctl(self, request: int, arg: int = 0) -> int:
         """
@@ -261,6 +286,8 @@ class Quantix:
         Raises:
             QuantixException: If operation fails
         """
+        if self._usb is not None: return self._usb.get_driver_version()
+
         version = self._ioctl(QUANTIS_IOCTL_GET_DRIVER_VERSION)
         return version / 10.0
 
@@ -274,6 +301,8 @@ class Quantix:
         Raises:
             QuantixException: If operation fails
         """
+        if self._usb is not None: return self._usb.get_board_version()
+
         return self._ioctl(QUANTIS_IOCTL_GET_BOARD_VERSION)
 
     def get_modules_mask(self) -> int:
@@ -289,6 +318,8 @@ class Quantix:
         Raises:
             QuantixException: If operation fails
         """
+        if self._usb is not None: return self._usb.get_modules_mask()
+
         return self._ioctl(QUANTIS_IOCTL_GET_MODULES_MASK)
 
     def get_modules_status(self) -> int:
@@ -304,6 +335,8 @@ class Quantix:
         Raises:
             QuantixException: If operation fails
         """
+        if self._usb is not None: return self._usb.get_modules_status()
+
         return self._ioctl(QUANTIS_IOCTL_GET_MODULES_STATUS)
 
     def get_modules_count(self) -> int:
@@ -326,6 +359,8 @@ class Quantix:
         Raises:
             QuantixException: If operation fails
         """
+        if self._usb is not None: return self._usb.board_reset()
+
         self._ioctl(QUANTIS_IOCTL_RESET_BOARD)
 
     def enable_module(self, module: int) -> None:
@@ -341,6 +376,8 @@ class Quantix:
         """
         if not 0 <= module <= 3:
             raise ValueError("Module number must be 0-3")
+        if self._usb is not None:
+            return self._usb.modules_enable(1 << module)
         self._ioctl(QUANTIS_IOCTL_ENABLE_MODULE, module)
 
     def disable_module(self, module: int) -> None:
@@ -356,6 +393,8 @@ class Quantix:
         """
         if not 0 <= module <= 3:
             raise ValueError("Module number must be 0-3")
+        if self._usb is not None:
+            return self._usb.modules_disable(1 << module) 
         self._ioctl(QUANTIS_IOCTL_DISABLE_MODULE, module)
 
     def get_pci_info(self) -> tuple[int, int]:
@@ -368,6 +407,8 @@ class Quantix:
         Raises:
             QuantixException: If operation fails
         """
+        if self._usb is not None: raise QuantixException("Not a PCI device", self.device_path)
+
         value = self._ioctl(QUANTIS_IOCTL_GET_PCI_BUS_DEVICE_ID)
         bus_id = (value >> 16) & 0xFFFF
         device_id = value & 0xFFFF
@@ -391,6 +432,9 @@ class Quantix:
         """
         if size <= 0:
             raise ValueError("Size must be positive")
+
+        if self._usb is not None:
+            return self._usb.read(size)
 
         if self._fd is None:
             raise QuantixException(
@@ -503,3 +547,20 @@ class Quantix:
         """
         data = self.read(size)
         return list(data)
+
+    # --- new USB-only methods ---
+    def get_manufacturer(self) -> str:
+        return self._require_usb().manufacturer
+
+    def get_product(self) -> str:
+        return self._require_usb().product
+
+    def get_serial_number(self) -> str:
+        return self._require_usb().serial_number      # valid after open
+
+    def get_modules_power(self) -> int:
+        return self._require_usb().get_modules_power()
+
+    def get_modules_data_rate(self) -> int:
+        return self._require_usb().get_modules_data_rate()
+

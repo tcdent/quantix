@@ -8,11 +8,15 @@ import pytest
 from quantix import Quantix, DeviceType, count_devices, QuantixException
 
 
-def test_count_devices():
-    """Test device counting"""
-    pci_count = count_devices(DeviceType.PCI)
-    assert isinstance(pci_count, int)
-    assert pci_count >= 0
+def test_count_devices_usb():
+    """Test USB device counting (needs PyUSB and libusb-1.0)"""
+    pytest.importorskip("usb.core")
+    try:
+        usb_count = count_devices(DeviceType.USB)
+    except QuantixException as e:
+        pytest.skip(f"USB enumeration unavailable: {e}")
+    assert isinstance(usb_count, int)
+    assert usb_count >= 0
 
 
 @pytest.fixture
@@ -29,14 +33,16 @@ def qrnx():
 
 def test_device_init(qrnx):
     """Test device initialization"""
-    assert qrnx.device_type == DeviceType.PCI
-    assert qrnx.device_number == 0
-    assert qrnx.device_path == "/dev/qrandom0"
+    if qrnx.device_type == DeviceType.PCI:
+        assert qrnx.device_path == "/dev/qrandom0"
+    else:
+        assert qrnx.device_type == DeviceType.USB
+        assert qrnx.device_path == "usb:0aba:0102#0"
 
 
 def test_device_repr(qrnx):
     """Test device string representation"""
-    assert "PCI" in str(qrnx)
+    assert qrnx.device_type.name in str(qrnx)
     assert "0" in str(qrnx)
 
 
@@ -110,10 +116,11 @@ def test_invalid_device_number():
         Quantix(DeviceType.PCI, device_number=999)
 
 
-def test_usb_not_supported():
-    """Test that USB devices are not supported"""
+def test_invalid_usb_device_number():
+    """Test that an invalid USB device number raises exception"""
+    pytest.importorskip("usb.core")
     with pytest.raises(QuantixException):
-        Quantix(DeviceType.USB, device_number=0)
+        Quantix(DeviceType.USB, device_number=999)
 
 
 def test_read_zero_bytes(qrnx):
@@ -132,3 +139,19 @@ def test_read_int_range_invalid(qrnx):
     """Test that invalid range raises ValueError"""
     with pytest.raises(ValueError):
         qrnx.read_int_range(20, 10)
+
+
+@pytest.mark.parametrize("size", [1, 63, 64, 65, 511, 512, 513, 4097])
+def test_read_odd_sizes(qrnx, size):
+    """Test sizes around USB bulk packet boundaries (64 / 512 bytes)"""
+    data = qrnx.read(size)
+    assert len(data) == size
+
+
+def test_read_looks_random(qrnx):
+    """Rough sanity check of 64 KiB output (not a substitute for ent/dieharder)"""
+    data = qrnx.read(64 * 1024)
+    assert len(set(data)) == 256
+    ones = sum(bin(b).count("1") for b in data) / (len(data) * 8)
+    assert 0.49 < ones < 0.51
+    assert data != qrnx.read(64 * 1024)

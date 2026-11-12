@@ -36,6 +36,9 @@ dev = [
     "ruff>=0.1.0",
 ]
 
+[project.optional-dependencies]
+usb = ["pyusb>=1.2.1"]
+
 [project.urls]
 Homepage = "https://github.com/tcdent/quantix"
 Repository = "https://github.com/tcdent/quantix"

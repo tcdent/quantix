@@ -2,7 +2,7 @@
 
 Pure Python interface for ID Quantique Quantis Quantum Random Number Generators.
 
-This is an independent, clean-room implementation that provides direct access to Quantis PCI/PCIe quantum RNG devices through `/dev/qrandom*` device files.
+This is an independent, clean-room implementation that provides direct access to Quantis PCI/PCIe and USB quantum RNG devices through `/dev/qrandom*` and `pyusb` device files.
 
 ## Background
 
@@ -10,7 +10,7 @@ This library was created to modernize access to quantum random number generators
 
 Rather than try to bring forward compatibility to the aging C library codebase, we **reverse-engineered the interface and wrote a pure Python implementation from scratch**. The result is a modern, type-safe library with zero C dependencies.
 
-**Hardware**: Developed for and tested with a **Quantis PCI 16Mbps** card (circa 2013) on kernel 6.1.
+**Hardware**: Developed for and tested with a **Quantis PCI 16Mbps** card (circa 2013) on kernel 6.1 and **Quantis USB** module.
 
 This project includes:
 - A **pure Python library** (this package) - reverse-engineered from scratch
@@ -28,6 +28,8 @@ Without these fixes, the driver would not load or would crash when performing io
 
 ### Prerequisites
 
+- PCI
+
 1. **Quantis kernel driver** must be loaded:
    ```bash
    sudo modprobe quantis_pci
@@ -36,6 +38,35 @@ Without these fixes, the driver would not load or would crash when performing io
 2. **Device permissions**: Add your user to the `quantis` group:
    ```bash
    sudo usermod -a -G quantis $USER
+   # Log out and back in for group changes to take effect
+   ```
+
+- USB
+
+1. **Device permissions**: No kernel module needed. User access by group "pludev" per udev rules.
+
+   /etc/udev/rules.d/70-quantis-usb.rules:
+   ```txt
+   SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0aba", ATTR{idProduct}=="0102", MODE="0660", GROUP="plugdev", TAG+="uaccess" 
+   ```
+
+   ```bash
+   sudo udevadm control --reload-rules
+   sudo udevadm trigger
+   ```
+
+   ```bash
+   ls -l /dev/bus/usb/*
+   /dev/bus/usb/001:
+   [..]
+   crw-rw---- 1 root plugdev 189, 4 Nov 12 09:22 005
+   crw-rw---- 1 root plugdev 189, 5 Nov 12 09:22 006
+   [..]
+   ```
+
+2. **User permissions**: Add your user to the `plugdev` group:
+   ```bash
+   sudo usermod -a -G plugdev $USER
    # Log out and back in for group changes to take effect
    ```
 
@@ -69,6 +100,8 @@ pip install -e ".[dev]"
 
 ## Quick Start
 
+- PCI
+
 ```python
 from quantix import Quantix, DeviceType
 
@@ -90,13 +123,56 @@ with qrng:
     print(f"Random float: {random_float}")
 ```
 
+- USB
+
+```python
+from quantix import Quantix, DeviceType
+
+# Initialize device
+qrng = Quantix(DeviceType.USB, device_number=0)
+
+# Use as context manager (recommended)
+with qrng:
+    # Read 16 random bytes
+    random_bytes = qrng.read(16)
+    print(f"Random bytes: {random_bytes.hex()}")
+
+    # Read random integer
+    random_int = qrng.read_int()
+    print(f"Random int: {random_int}")
+
+    # Read random float [0.0, 1.0)
+    random_float = qrng.read_float()
+    print(f"Random float: {random_float}")
+```
+
 ## API Examples
 
 ### Device Information
 
+- PCI
+
 ```python
+from quantix import Quantix, DeviceType
+
 with Quantix(DeviceType.PCI, 0) as qrng:
     # Get device information via ioctl
+    driver_version = qrng.get_driver_version()
+    board_version = qrng.get_board_version()
+    modules_count = qrng.get_modules_count()
+
+    print(f"Driver: v{driver_version}")
+    print(f"Board: 0x{board_version:08x}")
+    print(f"Working modules: {modules_count}")
+``` 
+
+- USB
+
+```python
+from quantix import Quantix, DeviceType
+
+with Quantix(DeviceType.USB, 0) as qrng:
+    # Get device information via libusb
     driver_version = qrng.get_driver_version()
     board_version = qrng.get_board_version()
     modules_count = qrng.get_modules_count()
@@ -108,8 +184,31 @@ with Quantix(DeviceType.PCI, 0) as qrng:
 
 ### Reading Random Data
 
+- PCI
+
 ```python
+from quantix import Quantix, DeviceType
+
 with Quantix(DeviceType.PCI, 0) as qrng:
+    # Read bytes
+    data = qrng.read(1024)
+
+    # Read typed values
+    value_int = qrng.read_int()          # 32-bit unsigned
+    value_short = qrng.read_short()      # 16-bit unsigned
+    value_float = qrng.read_float()      # [0.0, 1.0)
+    value_double = qrng.read_double()    # [0.0, 1.0) higher precision
+
+    # Read in range
+    dice_roll = qrng.read_int_range(1, 6)  # 1-6 inclusive
+```
+
+- USB
+
+```python
+from quantix import Quantix, DeviceType
+
+with Quantix(DeviceType.USB, 0) as qrng:
     # Read bytes
     data = qrng.read(1024)
 
@@ -125,6 +224,8 @@ with Quantix(DeviceType.PCI, 0) as qrng:
 
 ### Module Control
 
+- PCI
+
 ```python
 with Quantix(DeviceType.PCI, 0) as qrng:
     # Get module status
@@ -139,9 +240,31 @@ with Quantix(DeviceType.PCI, 0) as qrng:
     qrng.reset_board()
 ```
 
+- USB
+
+```python
+from quantix import Quantix, DeviceType
+
+with Quantix(DeviceType.USB, 0) as qrng:
+    # Get module status
+    mask = qrng.get_modules_mask()      # Available modules
+    status = qrng.get_modules_status()  # Working modules
+
+    # Control modules
+    qrng.enable_module(0)
+    qrng.disable_module(0)
+
+    # Reset board
+    qrng.reset_board()
+```
+
 ## Architecture
 
 Quantix uses pure Python to interact directly with the Quantis hardware:
+
+- PCI
+
+No C library required! Direct syscalls for maximum simplicity.
 
 ```
 ┌──────────────┐
@@ -165,7 +288,30 @@ Quantix uses pure Python to interact directly with the Quantis hardware:
 └──────────────┘
 ```
 
-No C library required! Direct syscalls for maximum simplicity.
+- USB
+
+Only userspace "pyusb" (libusb1.0) needed.
+
+```
+┌──────────────┐
+│   Python     │
+│  Application │
+└──────┬───────┘
+       │ Quantix (Pure Python)
+       │ - pyusb via syscalls
+       ▼
+┌──────────────┐
+│    Kernel    │
+└──────┬───────┘
+       │ 
+       ▼
+┌──────────────┐
+│   Quantis    │
+│   Hardware   │  USB device
+└──────────────┘
+```
+
+
 
 ## Why Quantix?
 
@@ -216,13 +362,11 @@ This is an independent implementation not affiliated with ID Quantique.
 Currently supported:
 - ✅ Quantis PCI 16Mbps
 - ✅ Quantis PCIe (via PCI driver)
-
-Not yet supported:
-- ❌ Quantis USB (contributions welcome!)
+- ✅ Quantis USB (via pyusb)
 
 ## Troubleshooting
 
-### Permission Denied
+### Permission Denied (PCI)
 
 ```bash
 # Add user to quantis group
@@ -233,6 +377,16 @@ groups | grep quantis
 
 # If not showing, log out and back in or run:
 newgrp quantis
+```
+
+### Permission Denied (USB)
+
+```bash
+# Add user to quantis group
+sudo usermod -a -G plugdev $USER
+
+# Verify group membership
+id -a $USER
 ```
 
 ### No Device Found
@@ -250,6 +404,8 @@ sudo modprobe quantis_pci
 
 ### Multiple Devices
 
+- PCI
+
 ```python
 # List all devices
 from quantix import count_devices, DeviceType
@@ -260,6 +416,20 @@ print(f"Found {count} PCI devices")
 # Access specific device
 with Quantix(DeviceType.PCI, device_number=1) as qrng:
     data = qrng.read(16)
+```
+
+- USB
+
+```python
+from quantix import Quantix, DeviceType, count_devices
+
+for i in range(count_devices(DeviceType.USB)):
+    with Quantix(DeviceType.USB, i) as q:
+        print(f"usb device: {i}\n"
+              f"vendor: {q.get_manufacturer()}\n"
+              f"product: {q.get_product()}\n"
+              f"serial number: {q.get_serial_number()}\n"
+              f"board 0x{q.get_board_version():08x}, status {q.get_modules_status()}\n")
 ```
 
 ## Contributing
@@ -275,4 +445,5 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## References
 
 - [ID Quantique Quantis](https://www.idquantique.com/random-number-generation/products/quantis-rng/)
-- [Quantis PCI Driver (community fork)](https://github.com/tcdent/QuantisPci)
+- [Quantis PCI Driver (community fork)](https://github.com/tcdent/quantis-pci)
+- [Quantis Driver (PCI, USB)](https://github.com/sanddweller/QRNGPcieDriver/)
